@@ -1,0 +1,285 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum GameGenre {
+  BATTLE_ROYAL
+  CLASH_ROYALE
+  SHOOTER
+  PLATFORMER
+  SPORTS
+  FIGHTING
+  RACING
+  STRATEGY
+  ARCADE
+  OTHER
+}
+
+enum GameName {
+  BGMI
+  FREEFIRE
+  COD
+  OTHERS
+}
+
+enum TeamType {
+  TEAM // temporary team (matchmaking / room)
+  CREW // permanent crew
+}
+
+enum MembershipRole {
+  MEMBER
+  LEADER
+  CAPTAIN
+  CO_CAPTAIN
+}
+
+enum FriendRequestStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  BLOCKED
+}
+
+enum TournamentEntryType {
+  TEAM
+  PLAYER
+}
+
+model User {
+  id           String   @id @default(uuid())
+  gamertag     String   @unique
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Competitive / profile fields
+  primaryGenre    GameGenre?
+  // general list of games (via relation)
+  rating          Float?     @default(1000) // tournament rating (ELO-ish)
+  matchesPlayed   Int        @default(0)
+  wins            Int        @default(0)
+  activeStartTime String? // "HH:MM" or custom format
+  activeEndTime   String? // "HH:MM"
+  role            String? // free text (IGL, Support, etc.)
+  location        String?
+  badgesCount     Int        @default(0)
+  friendsCount    Int        @default(0)
+
+  // Relations
+  gameProfiles       PlayerGameProfile[]
+  achievements       Achievement[]
+  teamMemberships    TeamMembership[]
+  createdTeams       Team[]              @relation("TeamCreator")
+  friendRequestsSent FriendRequest[]     @relation("sentRequests")
+  friendRequestsRecv FriendRequest[]     @relation("recvRequests")
+  friendshipsA       Friendship[]        @relation("friendA")
+  friendshipsB       Friendship[]        @relation("friendB")
+  tournamentsCreated Tournament[]        @relation("Organizer")
+  tournamentPlayers  TournamentPlayer[] // direct player participations
+  userBadges         UserBadge[]
+  teamInvitesSent    TeamInvite[]        @relation("InvitedBy")
+
+  @@map("users")
+}
+
+model PlayerGameProfile {
+  id            String   @id @default(uuid())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String
+  game          GameName
+  otherGameName String? // if game == OTHERS, this stores custom name
+  gameProfileId String? // in-game profile id (string)
+  createdAt     DateTime @default(now())
+
+  @@index([userId])
+  @@map("player_game_profiles")
+}
+
+model Achievement {
+  id          String   @id @default(uuid())
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId      String
+  title       String
+  description String?
+  awardedAt   DateTime @default(now())
+
+  @@index([userId])
+  @@map("achievements")
+}
+
+model Team {
+  id           String    @id @default(uuid())
+  name         String
+  code         String    @unique // team code used to join
+  passwordHash String? // hashed team password (nullable)
+  type         TeamType  @default(TEAM)
+  isPrivate    Boolean   @default(false) // if private, cannot join via matchmaking
+  logoUrl      String?
+  tagline      String?
+  about        String?
+  expiresAt    DateTime? // used for auto disband (nullable)
+  createdAt    DateTime  @default(now())
+  creatorId    String?
+  creator      User?     @relation("TeamCreator", fields: [creatorId], references: [id], onDelete: SetNull)
+
+  // Requirements used at matchmaking time - JSON to keep flexible
+  requirements Json? // e.g. { "minRank": 900, "roles": ["IGL","Entry"] }
+
+  // Relations
+  memberships TeamMembership[]
+  tournaments TournamentTeam[]
+  isDisbanded Boolean          @default(false)
+
+  invites TeamInvite[]
+
+  @@index([creatorId])
+  @@map("teams")
+}
+
+model TeamMembership {
+  id       String         @id @default(uuid())
+  team     Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId   String
+  user     User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   String
+  role     MembershipRole @default(MEMBER)
+  joinedAt DateTime       @default(now())
+  isActive Boolean        @default(true)
+
+  @@unique([teamId, userId])
+  @@index([userId])
+  @@index([teamId])
+  @@map("team_memberships")
+}
+
+model Friendship {
+  id        String   @id @default(uuid())
+  userA     User     @relation("friendA", fields: [userAId], references: [id], onDelete: Cascade)
+  userAId   String
+  userB     User     @relation("friendB", fields: [userBId], references: [id], onDelete: Cascade)
+  userBId   String
+  createdAt DateTime @default(now())
+
+  // Application must ensure userAId < userBId ordering to avoid duplicate pairs.
+  @@unique([userAId, userBId])
+  @@map("friendships")
+}
+
+model FriendRequest {
+  id        String              @id @default(uuid())
+  from      User                @relation("sentRequests", fields: [fromId], references: [id], onDelete: Cascade)
+  fromId    String
+  to        User                @relation("recvRequests", fields: [toId], references: [id], onDelete: Cascade)
+  toId      String
+  message   String?
+  status    FriendRequestStatus @default(PENDING)
+  createdAt DateTime            @default(now())
+  updatedAt DateTime            @updatedAt
+
+  @@unique([fromId, toId])
+  @@index([toId])
+  @@map("friend_requests")
+}
+
+model Tournament {
+  id           String   @id @default(uuid())
+  name         String
+  tagline      String?
+  description  String?
+  isOffline    Boolean  @default(false)
+  venue        String? // optional, if offline include venue details
+  startDate    DateTime
+  endDate      DateTime
+  game         GameName
+  requirements Json? // flexible: { "minRank": 900, "teamSize": 5 }
+  feeAmount    Float? // null => free
+  organizerId  String?
+  organizer    User?    @relation("Organizer", fields: [organizerId], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  isPublished  Boolean  @default(false)
+
+  // Relations
+  teamParticipants   TournamentTeam[]
+  playerParticipants TournamentPlayer[]
+  results            Json? // bracket/results JSON (flexible for hackathon)
+
+  @@index([organizerId])
+  @@map("tournaments")
+}
+
+model TournamentTeam {
+  id           String     @id @default(uuid())
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  tournamentId String
+  team         Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId       String
+  registeredAt DateTime   @default(now())
+  paymentPaid  Boolean    @default(false)
+
+  @@unique([tournamentId, teamId])
+  @@map("tournament_teams")
+}
+
+model TournamentPlayer {
+  id           String     @id @default(uuid())
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  tournamentId String
+  player       User       @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  playerId     String
+  registeredAt DateTime   @default(now())
+  paymentPaid  Boolean    @default(false)
+
+  @@unique([tournamentId, playerId])
+  @@map("tournament_players")
+}
+
+model Badge {
+  id          String   @id @default(uuid())
+  key         String   @unique // machine id e.g. "early_adopter"
+  title       String
+  description String?
+  createdAt   DateTime @default(now())
+
+  userBadges UserBadge[]
+
+  @@map("badges")
+}
+
+model UserBadge {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  badge     Badge    @relation(fields: [badgeId], references: [id], onDelete: Cascade)
+  badgeId   String
+  awardedAt DateTime @default(now())
+
+  @@unique([userId, badgeId])
+  @@map("user_badges")
+}
+
+model TeamInvite {
+  id               String   @id @default(uuid())
+  team             Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  teamId           String
+  invitedBy        User     @relation("InvitedBy", fields: [invitedById], references: [id], onDelete: Cascade)
+  invitedById      String
+  invitedUserEmail String? // fallback invite via email
+  invitedAt        DateTime @default(now())
+  accepted         Boolean  @default(false)
+
+  @@index([teamId])
+  @@map("team_invites")
+}
