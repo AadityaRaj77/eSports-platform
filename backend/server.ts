@@ -1,12 +1,17 @@
-import express, { Request, Response } from "express"
+import express from "express";
+import cors from "cors";
+import authRoutes from "./routes/auth.routes";
+import profileRoutes from "./routes/profile.routes";
 
-const app = express()
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+
+app.use("/auth", authRoutes);
+app.use("/profile", profileRoutes);
+
 const port = 3000
-
-app.get('/', (req: Request, res: Response) => {
-  res.send('Hello World!')
-})
-
 app.listen(port, () => {
-  console.log(`Example app listening on port ${port}`)
-})
+  console.log("Backend running on 3000");
+});

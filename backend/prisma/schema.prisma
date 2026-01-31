@@ -62,6 +62,7 @@ model User {
   gamertag     String   @unique
   email        String   @unique
   passwordHash String
+  isProfileComplete Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
